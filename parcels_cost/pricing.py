@@ -111,165 +111,58 @@ class PricingEngine:
     
     def apply_discounts(self, parcel_items: List[OrderItem]) -> tuple[List[OrderItem], float]:
         """
-        Step 5: 应用多重折扣
-        
+        Step 5: 应用折扣
+
         折扣规则:
-        1. 小包裹 mania: 每4个小包裹中,最便宜的1个免费
-        2. 中包裹 mania: 每3个中包裹中,最便宜的1个免费
-        3. 混合 mania: 每5个任意包裹中,最便宜的1个免费
+        - 全部是小包裹: 每第4个免费
+        - 全部是中包裹: 每第3个免费
+        - 混合包裹或有heavy包裹: 每第5个免费
         
-        每个包裹只能使用一次折扣
-        选择节省最多的折扣组合
-        
-        Example (from PDF):
-        6x medium parcels. 3x $8, 3x $10.
-        1st discount: all 3 $8 parcels, save $8 (cheapest $8 is free)
-        2nd discount: all 3 $10 parcels, save $10 (cheapest $10 is free)
-        
-        这个示例的关键是:6个包裹被分成2组(每组3个),每组的最便宜的一个免费
-        
+        不调整包裹顺序，按原始顺序计算折扣
+
         Returns:
             (折扣项列表, 总折扣金额)
         """
         if not parcel_items:
             return [], 0.0
         
-        # 按包裹类型分组
+        # 检查包裹类型组成
         small_parcels = [p for p in parcel_items if p.parcel_type == ParcelType.SMALL]
         medium_parcels = [p for p in parcel_items if p.parcel_type == ParcelType.MEDIUM]
-        all_parcels = parcel_items[:]
+        heavy_parcels = [p for p in parcel_items if p.parcel_type == ParcelType.HEAVY]
         
-        # 计算每种折扣的潜在节省
-        # 返回格式: List[Tuple[savings, List[parcel_ids]]]
-        small_discounts = self._calc_all_discounts(
-            small_parcels, DISCOUNT_CONFIG["small_every_nth"], "small_mania"
-        )
-        medium_discounts = self._calc_all_discounts(
-            medium_parcels, DISCOUNT_CONFIG["medium_every_nth"], "medium_mania"
-        )
-        mixed_discounts = self._calc_all_discounts(
-            all_parcels, DISCOUNT_CONFIG["mixed_every_nth"], "mixed_mania"
-        )
+        # 判断使用哪种折扣规则
+        total_count = len(parcel_items)
+        is_all_small = len(small_parcels) == total_count
+        is_all_medium = len(medium_parcels) == total_count
+        is_mixed_or_heavy = heavy_parcels or not (is_all_small or is_all_medium)
         
-        # 找出最佳折扣组合
-        best_combo = self._find_best_combination(
-            small_discounts, medium_discounts, mixed_discounts, parcel_items
-        )
+        # 确定折扣参数
+        if is_all_small:
+            every_nth = DISCOUNT_CONFIG["small_every_nth"]
+            discount_type = "small_mania"
+        elif is_all_medium:
+            every_nth = DISCOUNT_CONFIG["medium_every_nth"]
+            discount_type = "medium_mania"
+        else:
+            every_nth = DISCOUNT_CONFIG["mixed_every_nth"]
+            discount_type = "mixed_mania"
         
-        # 生成折扣项
+        # 计算折扣：按原始顺序每N个一组，最便宜的免费
         discount_items = []
-        total_discount = 0.0
-        
-        for discount_type, savings, _ in best_combo:
-            discount_items.append(OrderItem(
-                name=self._get_discount_name(discount_type),
-                cost=-savings,  # 折扣为负数
-                parcel_type=None
-            ))
-            total_discount += savings
-        
-        return discount_items, round(total_discount, 2)
-    
-    def _calc_all_discounts(
-        self, 
-        parcels: List[OrderItem], 
-        every_nth: int, 
-        discount_type: str
-    ) -> List[Tuple[float, List[int], str]]:
-        """
-        计算某种折扣的所有可能节省组合
-        
-        Args:
-            parcels: 符合条件的包裹列表
-            every_nth: 每第N个包裹免费
-            discount_type: 折扣类型
-            
-        Returns:
-            List of (savings, parcel_ids, discount_type)
-        """
-        if len(parcels) < every_nth:
-            return []
-        
-        # 按原始费用排序,最便宜的在前
-        sorted_parcels = sorted(parcels, key=lambda p: (p.original_cost, id(p)))
-        
-        # 分组计算折扣
-        # 例如6个中包裹,每3个1个免费 -> 分成2组,每组最便宜的免费
-        results = []
-        used_count = 0
-        
-        while used_count + every_nth <= len(sorted_parcels):
-            group = sorted_parcels[used_count:used_count + every_nth]
-            # 组内最便宜的免费
-            cheapest = group[0]
-            savings = cheapest.original_cost
-            parcel_ids = [id(cheapest)]
-            
-            results.append((savings, parcel_ids, discount_type))
-            used_count += every_nth
-        
-        return results
-    
-    def _find_best_combination(
-        self,
-        small_discounts: List[Tuple[float, List[int], str]],
-        medium_discounts: List[Tuple[float, List[int], str]],
-        mixed_discounts: List[Tuple[float, List[int], str]],
-        all_parcels: List[OrderItem]
-    ) -> List[Tuple[float, List[int], str]]:
-        """
-        找出节省最多的折扣组合
-        
-        规则: 每个包裹只能使用一次折扣
-        """
-        best_combo = []
-        max_savings = 0.0
-        
-        # 收集所有可用的折扣
-        all_discounts = []
-        for d in small_discounts:
-            all_discounts.append((*d, "small_mania_key"))
-        for d in medium_discounts:
-            all_discounts.append((*d, "medium_mania_key"))
-        for d in mixed_discounts:
-            all_discounts.append((*d, "mixed_mania_key"))
-        
-        # 尝试所有可能的组合
-        # 使用动态规划/贪心:优先选择节省最多的折扣
-        # 但要处理冲突
-        used_parcels = set()
-        selected_discounts = []
-        
-        # 先收集所有可能的折扣(带索引)
-        indexed_discounts = []
-        for i, (savings, parcel_ids, dtype, key) in enumerate(all_discounts):
-            indexed_discounts.append({
-                "index": i,
-                "savings": savings,
-                "parcel_ids": set(parcel_ids),
-                "type": dtype,
-                "key": key
-            })
-        
-        # 按节省金额降序排序
-        indexed_discounts.sort(key=lambda x: -x["savings"])
-        
-        # 贪心选择不冲突的折扣
-        for discount in indexed_discounts:
-            if not discount["parcel_ids"] & used_parcels:
-                # 不冲突,可以选择
-                used_parcels |= discount["parcel_ids"]
-                selected_discounts.append((
-                    discount["type"],
-                    discount["savings"],
-                    discount["parcel_ids"]
+        for i in range(0, total_count, every_nth):
+            group = parcel_items[i:i + every_nth]
+            if len(group) == every_nth:
+                # 组内最便宜的免费
+                cheapest = min(group, key=lambda p: p.original_cost)
+                discount_items.append(OrderItem(
+                    name=self._get_discount_name(discount_type),
+                    cost=-cheapest.original_cost,
+                    parcel_type=None
                 ))
         
-        # 检查是否需要尝试其他组合(简单贪心可能不是最优的)
-        # 但对于这个简单场景,贪心应该足够好了
-        total_savings = sum(d[1] for d in selected_discounts)
-        
-        return selected_discounts
+        total_discount = sum(abs(item.cost) for item in discount_items)
+        return discount_items, round(total_discount, 2)
     
     def _get_discount_name(self, discount_type: str) -> str:
         """获取折扣名称"""

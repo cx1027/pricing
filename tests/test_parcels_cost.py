@@ -218,9 +218,11 @@ class TestStep5Discounts(unittest.TestCase):
     
     def test_pdf_example_6_medium_parcels(self):
         """
-        PDF示例: 6个中包裹, 3个$8, 3个$10
-        第1个折扣: 3个$8中最便宜的免费, 节省$8
-        第2个折扣: 3个$10中最便宜的免费, 节省$10
+        6个中包裹, 3个$8, 3个$10
+        规则: 全部中包裹，每第3个免费
+        按原始顺序每3个一组:
+        - 前3个: 最便宜的$8免费, 节省$8
+        - 后3个: 最便宜的$10免费, 节省$10
         """
         parcels = [
             Parcel(length=20, width=30, height=40, weight=1.0),  # $8
@@ -233,8 +235,8 @@ class TestStep5Discounts(unittest.TestCase):
         result = calculate_parcels_cost(parcels)
         
         # 总额: 3*8 + 3*10 = 54
-        # 折扣: $8 + $10 = $18
-        # 应付: $54 - $18 = $36
+        # 折扣: $8 + $10 = $18 (两个"每第3个免费"组)
+        # 应付: $54 - $18 = 36
         self.assertEqual(result.total_cost, 36.0)
         
         # 检查两个折扣
@@ -266,8 +268,12 @@ class TestStep5Discounts(unittest.TestCase):
         self.assertIn("Small Parcel Mania - 4th Free", item_names)
     
     def test_multiple_discount_types(self):
-        """同时应用多种折扣"""
-        # 4个小包裹 + 3个中包裹
+        """
+        4个小包裹 + 3个中包裹 = 7个混合包裹
+        规则: 混合包裹，每第5个免费
+        - 7个包裹使用"每第5个免费"规则
+        - 最便宜的包裹免费 = 最便宜的小包裹$3
+        """
         parcels = [
             Parcel(length=5, width=5, height=5),    # Small x4
             Parcel(length=5, width=5, height=5),
@@ -279,12 +285,12 @@ class TestStep5Discounts(unittest.TestCase):
         ]
         result = calculate_parcels_cost(parcels)
         
-        # Small mania: 4个中最便宜的免费 -> 节省$3
-        # Medium mania: 3个中最便宜的免费 -> 节省$8
-        # 总折扣: $11
+        # 混合包裹规则: 每5个中1个免费
+        # 7个包裹按顺序，每组5个中最便宜的免费
+        # 最便宜的是$3的小包裹
         discount_items = [i for i in result.items if i.cost < 0]
         total_discount = sum(abs(i.cost) for i in discount_items)
-        self.assertEqual(total_discount, 11.0)
+        self.assertEqual(total_discount, 3.0)
 
 
 class TestSpeedyShippingWithDiscounts(unittest.TestCase):
